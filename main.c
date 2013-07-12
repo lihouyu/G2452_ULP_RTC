@@ -76,9 +76,8 @@ unsigned char _USI_I2C_slave_n_byte = 0;
 void main(void) {
     WDTCTL = WDTPW | WDTHOLD;   // Stop watchdog timer
 
-    // Set MCLK and SMCLK
-    BCSCTL1 = CALBC1_1MHZ;
-    DCOCTL = CALDCO_1MHZ;
+    // Set system clock to run at around 100kHz
+    BCSCTL1 = 0x80;             // Set RSEL=0, with default DCO=3 makes the CPU run at ~100kHz
 
     // Setup P1 pin directions
     P1DIR |= (BIT0 + BIT5);             // P1.0 for 1-Hz output
