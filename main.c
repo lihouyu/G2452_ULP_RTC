@@ -53,7 +53,7 @@ unsigned char _DATA_STORE[31];  // Data storage
                                 // 29: Alarm interrupt enable bits
                                 // 30: Alarm interrupt flags
 
-const unsigned int _second_div = 2048;      // 1/16 of 1-Hz with a bit tuning
+const unsigned int _second_div = 8192;      // 1/4 of 1-Hz with a bit tuning
 unsigned int _second_tick = 0;              // Ticker for a second
 unsigned char _is_leap_year = 0;            // Leap year indicator
 
@@ -102,7 +102,7 @@ void main(void) {
                                 // MCx = 02, continuous mode
 
     TACCR0 = _second_div;       // The timer clock is 32768-Hz
-                                // _second_div is 32768-Hz / 16
+                                // _second_div is 32768-Hz / 4
                                 // so that we have enough space for doing different actions
     TACCTL0 |= CCIE;            // Enable timer capture interrupt
 
@@ -117,9 +117,10 @@ void main(void) {
     else
         USI_I2C_slave_init(_I2C_addr_op1);
 
-    __enable_interrupt();
-
     while(1) {
+        // Entering LPM3 here with interrupt enabled
+        _BIS_SR(LPM3_bits + GIE);
+
         if (_RTC_action_bits & BIT0) {  // The main timer increment
             _time_increment();
             _RTC_action_bits &= ~BIT0;
@@ -488,34 +489,29 @@ void _USI_I2C_slave_reset_byte_count() {
  */
 #pragma vector=TIMER0_A0_VECTOR
 __interrupt void Timer_A0(void) {
+    // Exit LPM3
+    _BIC_SR_IRQ(LPM3_bits);
+
     TACCR0 += _second_div;
 
     _second_tick++; // Increment the ticker
     switch (_second_tick) {
+    case 1:
+        _RTC_action_bits |= BIT0;   // Let's do time increment now
+        break;
     case 2:
+        // Toggle P1.0 output level every 0.5s
+        // to form a full 1-Hz square wave output
+        P1OUT ^= BIT0;
+        break;
+    case 3:
         _RTC_action_bits |= BIT4;   // Let's check alarm interrupt flag and output interrupt
         break;
     case 4:
-        break;
-    case 6:
-        _RTC_action_bits |= BIT5;   // Reset alarm interrupt output after 4 division period
-        break;
-    case 8:
         // Toggle P1.0 output level every 0.5s
         // to form a full 1-Hz square wave output
         P1OUT ^= BIT0;
-        break;
-    case 10:
-        break;
-    case 12:
-        _RTC_action_bits |= BIT0;   // Let's do time increment now
-        break;
-    case 14:
-        break;
-    case 16:
-        // Toggle P1.0 output level every 0.5s
-        // to form a full 1-Hz square wave output
-        P1OUT ^= BIT0;
+        _RTC_action_bits |= BIT5;   // Reset alarm interrupt output after 250ms period
         _second_tick = 0;   // Reset ticker
     }
 }

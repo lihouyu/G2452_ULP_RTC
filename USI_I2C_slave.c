@@ -27,7 +27,7 @@ void USI_I2C_slave_init(unsigned char USI_I2C_slave_OA) {
     USICTL1 &= ~USISTTIFG;                  // Clear previous interrupt flag
     USICTL1 &= ~USIIFG;
 
-    __enable_interrupt();                   // Enable global interrupt
+    //__enable_interrupt();                   // Enable global interrupt
 }
 
 #pragma vector = USI_VECTOR
