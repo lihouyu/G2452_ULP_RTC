@@ -23,9 +23,10 @@
  *      P2.0            Individual alarm interrupt output for Alarm1
  *      P2.1            Individual alarm interrupt output for Alarm2
  *      P2.2            Individual alarm interrupt output for Alarm3
- *      P2.3            Individual alarm interrupt output for Alarm4
- *      P2.4            Individual alarm interrupt output for Alarm5
- *      P2.5            Individual alarm interrupt output for Alarm6
+ *      P2.3            Not used (pull down to GND)
+ *      P2.4            Not used (pull down to GND)
+ *      P2.5            Low power mode trigger. Low for activating low power mode.
+ *                      Pull down to GND by internal pull-down resistor by default.
  */
 
 #include <msp430.h>
@@ -45,11 +46,12 @@ unsigned char _DATA_STORE[31];  // Data storage
                                 // 7: RTC century in BCD
                                 // 8~10: Alarm1: minute(BCD), hour(BCD), day(s)(Bit Mask)
                                     // MSB of byte 9 is the match enable bit
-                                // 11~25: Same as 8~10 for Alarm2~Alarm6
+                                // 11~16: Same as 8~10 for Alarm2~Alarm3
+                                // 17~25: Not used
                                 // 26: Not used
                                 // 27: Not used
                                 // 28: Reserved for general configuration
-                                    // BIT7: Dedicated interrupt output for Alarm1~6
+                                    // BIT7: Dedicated interrupt output for Alarm1~3
                                 // 29: Alarm interrupt enable bits
                                 // 30: Alarm interrupt flags
 
@@ -62,6 +64,9 @@ unsigned char _I2C_data_offset = 0;         // Offset for data accessing in I2C
 unsigned char _RTC_action_bits = 0x00;      // For marking actions in interrupt
                                             // and run the action in the main loop
 unsigned char _RTC_byte_l = 0, _RTC_byte_h = 0; // For calculation use
+
+unsigned char _in_lpm = 0;                  // LPM indicator
+unsigned char _prev_in_lpm = 0;             // Previous LPM status indicator
 
 /***********************************************
  * Callback related variables (Mandatory)
@@ -88,14 +93,22 @@ void main(void) {
     P1OUT |= (BIT3 + BIT6 + BIT7);      // Using pull-up resistor on P1.3, P1.6, P1.7
     P1OUT &= ~(BIT1 + BIT2 + BIT4);     // Using pull-down resistor on P1.1, P1.2, P1.4
 
-    // Set P2.0~P2.5 as dedicated output for alarm1~6
-    P2DIR |= (BIT0 + BIT1 + BIT2 + BIT3 + BIT4 + BIT5);
-    // Default low
-    P2OUT &= ~(BIT0 + BIT1 + BIT2 + BIT3 + BIT4 + BIT5);
+    // Set P2.0~P2.2 as dedicated output for alarm1~3
+    P2DIR |= (BIT0 + BIT1 + BIT2);
+    P2OUT &= ~(BIT0 + BIT1 + BIT2);     // Output low by default
+
+    P2REN |= (BIT3 + BIT4 + BIT5);      // Enable pull resistors for P2.3~P2.5
+    P2OUT &= ~(BIT3 + BIT4 + BIT5);     // Using pull-down resistors by default
 
     // Configure for ACLK, no division applied
     BCSCTL3 |= XCAP_3;          // BCSCTL3 |= 0x0C;
                                 // XCAPx = 11, Oscillator capacitor ~12.5 pF
+
+    // Initialize data store values
+    _init_DS();
+    // Check leap year with initial data
+    // Useless for 1st power up
+    //_check_leap_year();
 
     // Setup Timer
     TACTL |= (TASSEL_1 + MC_2); // TASSELx = 01, using ACLK as source
@@ -106,18 +119,17 @@ void main(void) {
                                 // so that we have enough space for doing different actions
     TACCTL0 |= CCIE;            // Enable timer capture interrupt
 
-    // Initialize data store values
-    _init_DS();
-    // Check leap year with initial data
-    _check_leap_year();
-
-    // Start I2C slave
-    if (P1IN & BIT3)
-        USI_I2C_slave_init(_I2C_addr);
-    else
-        USI_I2C_slave_init(_I2C_addr_op1);
-
     while(1) {
+        _prev_in_lpm = _in_lpm;
+        if (!(P2IN & BIT5)) _in_lpm = 1;
+        if (P2IN & BIT5) _in_lpm = 0;
+        if (_prev_in_lpm != _in_lpm) {
+            if (_in_lpm)
+                _enter_lpm();
+            else
+                _exit_lpm();
+        }
+
         // Entering LPM3 here with interrupt enabled
         _BIS_SR(LPM3_bits + GIE);
 
@@ -330,24 +342,6 @@ void _check_alarms() {
             (_DATA_STORE[16] & 0x80 ||
                     _DATA_STORE[16] & day_mask_bit))
         _DATA_STORE[30] |= BIT2;
-    // Alarm 4
-    if (_DATA_STORE[1] == _DATA_STORE[17] &&
-            _DATA_STORE[2] + 0x80 == _DATA_STORE[18] &&
-            (_DATA_STORE[19] & 0x80 ||
-                    _DATA_STORE[19] & day_mask_bit))
-        _DATA_STORE[30] |= BIT3;
-    // Alarm 5
-    if (_DATA_STORE[1] == _DATA_STORE[20] &&
-            _DATA_STORE[2] + 0x80 == _DATA_STORE[21] &&
-            (_DATA_STORE[22] & 0x80 ||
-                    _DATA_STORE[22] & day_mask_bit))
-        _DATA_STORE[30] |= BIT4;
-    // Alarm 6
-    if (_DATA_STORE[1] == _DATA_STORE[23] &&
-            _DATA_STORE[2] + 0x80 == _DATA_STORE[24] &&
-            (_DATA_STORE[25] & 0x80 ||
-                    _DATA_STORE[25] & day_mask_bit))
-        _DATA_STORE[30] |= BIT5;
 }
 
 /**
@@ -355,7 +349,7 @@ void _check_alarms() {
  */
 void _alarm_interrupt() {
     unsigned char INT_uni = 0;
-    unsigned char INT_A1 = 0, INT_A2 = 0, INT_A3 = 0, INT_A4 = 0, INT_A5 = 0, INT_A6 = 0;
+    unsigned char INT_A1 = 0, INT_A2 = 0, INT_A3 = 0;
 
     // Alarm 1
     if (_DATA_STORE[30] & BIT0 &&
@@ -378,27 +372,6 @@ void _alarm_interrupt() {
         if (_DATA_STORE[28] & 0x80)
             INT_A3 = 1;
     }
-    // Alarm 4
-    if (_DATA_STORE[30] & BIT3 &&
-            _DATA_STORE[29] & BIT3) {
-        INT_uni = 1;
-        if (_DATA_STORE[28] & 0x80)
-            INT_A4 = 1;
-    }
-    // Alarm 5
-    if (_DATA_STORE[30] & BIT4 &&
-            _DATA_STORE[29] & BIT4) {
-        INT_uni = 1;
-        if (_DATA_STORE[28] & 0x80)
-            INT_A5 = 1;
-    }
-    // Alarm 6
-    if (_DATA_STORE[30] & BIT5 &&
-            _DATA_STORE[29] & BIT5) {
-        INT_uni = 1;
-        if (_DATA_STORE[28] & 0x80)
-            INT_A6 = 1;
-    }
 
     // Set the interrupt output pin to high
     if (INT_uni)
@@ -409,12 +382,6 @@ void _alarm_interrupt() {
         P2OUT |= BIT1;
     if (INT_A3)
         P2OUT |= BIT2;
-    if (INT_A4)
-        P2OUT |= BIT3;
-    if (INT_A5)
-        P2OUT |= BIT4;
-    if (INT_A6)
-        P2OUT |= BIT5;
 }
 
 /**
@@ -422,7 +389,30 @@ void _alarm_interrupt() {
  */
 void _alarm_reset_interrupt() {
     P1OUT &= ~BIT5;
-    P2OUT &= ~(BIT0 + BIT1 + BIT2 + BIT3 + BIT4 + BIT5);
+    P2OUT &= ~(BIT0 + BIT1 + BIT2);
+}
+
+/**
+ * Enter low power mode
+ */
+void _enter_lpm() {
+    // Set output pin low
+    P1OUT &= ~(BIT0 + BIT5);
+    P2OUT &= ~(BIT0 + BIT1 + BIT2);
+
+    // Set USI module in soft reset mode
+    USICTL0 = USISWRST;
+}
+
+/**
+ * Exit low power mode
+ */
+void _exit_lpm() {
+    // Setup I2C slave
+    if (P1IN & BIT3)
+        USI_I2C_slave_init(_I2C_addr);
+    else
+        USI_I2C_slave_init(_I2C_addr_op1);
 }
 
 /***********************************************
@@ -485,7 +475,7 @@ void _USI_I2C_slave_reset_byte_count() {
 //**********************************************/
 
 /**
- * The timer capture interrupt is set to happen every 0.5s
+ * The timer capture interrupt is set to happen every 0.25s
  */
 #pragma vector=TIMER0_A0_VECTOR
 __interrupt void Timer_A0(void) {
@@ -500,17 +490,19 @@ __interrupt void Timer_A0(void) {
         _RTC_action_bits |= BIT0;   // Let's do time increment now
         break;
     case 2:
-        // Toggle P1.0 output level every 0.5s
-        // to form a full 1-Hz square wave output
-        P1OUT ^= BIT0;
+        if (!_in_lpm)
+            // Toggle P1.0 output level every 0.5s
+            // to form a full 1-Hz square wave output
+            P1OUT |= BIT0;
         break;
     case 3:
-        _RTC_action_bits |= BIT4;   // Let's check alarm interrupt flag and output interrupt
+        if (!_in_lpm)
+            _RTC_action_bits |= BIT4;   // Let's check alarm interrupt flag and output interrupt
         break;
     case 4:
         // Toggle P1.0 output level every 0.5s
         // to form a full 1-Hz square wave output
-        P1OUT ^= BIT0;
+        P1OUT &= ~BIT0;
         _RTC_action_bits |= BIT5;   // Reset alarm interrupt output after 250ms period
         _second_tick = 0;   // Reset ticker
     }
