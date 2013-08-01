@@ -16,8 +16,6 @@ void _time_carry(unsigned char * byte);
 void _check_alarms();
 void _alarm_interrupt();
 void _alarm_reset_interrupt();
-void _enter_lpm();
-void _exit_lpm();
 
 /***********************************************
  * Mandatory functions for callback

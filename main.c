@@ -82,7 +82,9 @@ void main(void) {
     WDTCTL = WDTPW | WDTHOLD;   // Stop watchdog timer
 
     // Set system clock to run at around 100kHz
-    BCSCTL1 = 0x80;             // Set RSEL=0, with default DCO=3 makes the CPU run at ~100kHz
+    //BCSCTL1 = 0x80;             // Set RSEL=0, with default DCO=3 makes the CPU run at ~100kHz
+    BCSCTL1 = CALBC1_1MHZ;
+    DCOCTL = CALDCO_1MHZ;
 
     // Setup P1 pin directions
     P1DIR |= (BIT0 + BIT5);             // P1.0 for 1-Hz output
@@ -110,6 +112,23 @@ void main(void) {
     // Useless for 1st power up
     //_check_leap_year();
 
+    // Set LPM indicator at 1st power up
+    // and align previous LPM indicator
+    // to avoid setup I2C slave twice
+    if (!(P2IN & BIT5))
+        _in_lpm = 1;
+    else
+        _in_lpm = 0;
+    _prev_in_lpm = _in_lpm;
+
+    if (!_in_lpm) {
+        // Setup I2C slave
+        if (P1IN & BIT3)
+            USI_I2C_slave_init(_I2C_addr);
+        else
+            USI_I2C_slave_init(_I2C_addr_op1);
+    }
+
     // Setup Timer
     TACTL |= (TASSEL_1 + MC_2); // TASSELx = 01, using ACLK as source
                                 // MCx = 02, continuous mode
@@ -120,18 +139,25 @@ void main(void) {
     TACCTL0 |= CCIE;            // Enable timer capture interrupt
 
     while(1) {
-        _prev_in_lpm = _in_lpm;
-        if (!(P2IN & BIT5)) _in_lpm = 1;
-        if (P2IN & BIT5) _in_lpm = 0;
-        if (_prev_in_lpm != _in_lpm) {
-            if (_in_lpm)
-                _enter_lpm();
-            else
-                _exit_lpm();
-        }
-
         // Entering LPM3 here with interrupt enabled
         _BIS_SR(LPM3_bits + GIE);
+
+        if (_prev_in_lpm != _in_lpm) {  // Set LPM indicator when there's a LPM state change
+            if (_in_lpm) {
+                // Set output pin low
+                P1OUT &= ~(BIT0 + BIT5);
+                P2OUT &= ~(BIT0 + BIT1 + BIT2);
+
+                // Set USI module in soft reset mode
+                USICTL0 = USISWRST;
+            } else {
+                // Setup I2C slave
+                if (P1IN & BIT3)
+                    USI_I2C_slave_init(_I2C_addr);
+                else
+                    USI_I2C_slave_init(_I2C_addr_op1);
+            }
+        }
 
         if (_RTC_action_bits & BIT0) {  // The main timer increment
             _time_increment();
@@ -392,29 +418,6 @@ void _alarm_reset_interrupt() {
     P2OUT &= ~(BIT0 + BIT1 + BIT2);
 }
 
-/**
- * Enter low power mode
- */
-void _enter_lpm() {
-    // Set output pin low
-    P1OUT &= ~(BIT0 + BIT5);
-    P2OUT &= ~(BIT0 + BIT1 + BIT2);
-
-    // Set USI module in soft reset mode
-    USICTL0 = USISWRST;
-}
-
-/**
- * Exit low power mode
- */
-void _exit_lpm() {
-    // Setup I2C slave
-    if (P1IN & BIT3)
-        USI_I2C_slave_init(_I2C_addr);
-    else
-        USI_I2C_slave_init(_I2C_addr_op1);
-}
-
 /***********************************************
  * Mandatory functions for callback
  * You can modify codes in these functions
@@ -481,6 +484,13 @@ void _USI_I2C_slave_reset_byte_count() {
 __interrupt void Timer_A0(void) {
     // Exit LPM3
     _BIC_SR_IRQ(LPM3_bits);
+
+    // Probe LPM trigger and set LPM indicator
+    _prev_in_lpm = _in_lpm;
+    if (!(P2IN & BIT5))
+        _in_lpm = 1;
+    else
+        _in_lpm = 0;
 
     TACCR0 += _second_div;
 
