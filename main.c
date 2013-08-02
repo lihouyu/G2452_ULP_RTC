@@ -121,14 +121,6 @@ void main(void) {
         _in_lpm = 0;
     _prev_in_lpm = _in_lpm;
 
-    if (!_in_lpm) {
-        // Setup I2C slave
-        if (P1IN & BIT3)
-            USI_I2C_slave_init(_I2C_addr);
-        else
-            USI_I2C_slave_init(_I2C_addr_op1);
-    }
-
     // Setup Timer
     TACTL |= (TASSEL_1 + MC_2); // TASSELx = 01, using ACLK as source
                                 // MCx = 02, continuous mode
@@ -138,19 +130,36 @@ void main(void) {
                                 // so that we have enough space for doing different actions
     TACCTL0 |= CCIE;            // Enable timer capture interrupt
 
+    if (!_in_lpm) {
+        // Setup I2C slave
+        if (P1IN & BIT3)
+            USI_I2C_slave_init(_I2C_addr);
+        else
+            USI_I2C_slave_init(_I2C_addr_op1);
+        __enable_interrupt();
+    }
+
     while(1) {
         if (_in_lpm)
             // Entering LPM3 here with interrupt enabled
             _BIS_SR(LPM3_bits + GIE);
 
         if (_prev_in_lpm != _in_lpm) {  // Set LPM indicator when there's a LPM state change
+            _prev_in_lpm = _in_lpm;
             if (_in_lpm) {
                 // Set output pin low
                 P1OUT &= ~(BIT0 + BIT5);
                 P2OUT &= ~(BIT0 + BIT1 + BIT2);
 
-                // Set USI module in soft reset mode
-                USICTL0 = USISWRST;
+                // Reset USI registers
+                //__disable_interrupt();
+                USICTL1 = 0x01;
+                USICTL0 = 0x01;
+                USICKCTL = 0x00;
+                USICNT = 0x00;
+                USISRL = 0x00;
+                USISRH = 0x00;
+                //__enable_interrupt();
             } else {
                 // Setup I2C slave
                 if (P1IN & BIT3)
@@ -488,7 +497,6 @@ __interrupt void Timer_A0(void) {
         _BIC_SR_IRQ(LPM3_bits);
 
     // Probe LPM trigger and set LPM indicator
-    _prev_in_lpm = _in_lpm;
     if (!(P2IN & BIT5))
         _in_lpm = 1;
     else
