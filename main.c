@@ -152,14 +152,10 @@ void main(void) {
                 P2OUT &= ~(BIT0 + BIT1 + BIT2);
 
                 // Reset USI registers
-                //__disable_interrupt();
-                USICTL1 = 0x01;
+                USICTL1 = 0x00;
+                USICNT = 0x00;
                 USICTL0 = 0x01;
                 USICKCTL = 0x00;
-                USICNT = 0x00;
-                USISRL = 0x00;
-                USISRH = 0x00;
-                //__enable_interrupt();
             } else {
                 // Setup I2C slave
                 if (P1IN & BIT3)
