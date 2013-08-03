@@ -19,6 +19,7 @@ void USI_I2C_slave_init(unsigned char USI_I2C_slave_OA) {
     _USI_I2C_slave_own_addr = USI_I2C_slave_OA; // Assign the slave own address to local variable
                                                 // The address should be a 7 bit address
 
+    __disable_interrupt();
     USICTL0 = (USIPE6 + USIPE7 + USISWRST); // Enable I2C pin & soft reset for USI module
     USICTL1 = (USII2C + USISTTIE + USIIE);  // Set I2C mode and enable related interrupt
     USICKCTL = USICKPL;                     // Use proper clock polarity
@@ -27,7 +28,7 @@ void USI_I2C_slave_init(unsigned char USI_I2C_slave_OA) {
     USICTL1 &= ~USISTTIFG;                  // Clear previous interrupt flag
     USICTL1 &= ~USIIFG;
 
-    //__enable_interrupt();                   // Enable global interrupt
+    __enable_interrupt();                   // Enable global interrupt
 }
 
 #pragma vector = USI_VECTOR

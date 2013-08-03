@@ -82,9 +82,9 @@ void main(void) {
     WDTCTL = WDTPW | WDTHOLD;   // Stop watchdog timer
 
     // Set system clock to run at around 100kHz
-    BCSCTL1 = 0x80;             // Set RSEL=0, with default DCO=3 makes the CPU run at ~100kHz
-    //BCSCTL1 = CALBC1_1MHZ;
-    //DCOCTL = CALDCO_1MHZ;
+    //BCSCTL1 = 0x80;             // Set RSEL=0, with default DCO=3 makes the CPU run at ~100kHz
+    BCSCTL1 = CALBC1_1MHZ;
+    DCOCTL = CALDCO_1MHZ;
 
     // Setup P1 pin directions
     P1DIR |= (BIT0 + BIT5);             // P1.0 for 1-Hz output
@@ -136,7 +136,7 @@ void main(void) {
             USI_I2C_slave_init(_I2C_addr);
         else
             USI_I2C_slave_init(_I2C_addr_op1);
-        __enable_interrupt();
+        //__enable_interrupt();
     }
 
     while(1) {
@@ -488,9 +488,8 @@ void _USI_I2C_slave_reset_byte_count() {
  */
 #pragma vector=TIMER0_A0_VECTOR
 __interrupt void Timer_A0(void) {
-    if (_in_lpm)
-        // Exit LPM3
-        _BIC_SR_IRQ(LPM3_bits);
+    // Exit LPM3
+    _BIC_SR_IRQ(LPM3_bits);
 
     // Probe LPM trigger and set LPM indicator
     if (!(P2IN & BIT5))
